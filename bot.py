@@ -54,7 +54,7 @@ user_last_used = defaultdict(int)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============== Flask Keep Alive (Hosting Ready) ==============
+# ============== Flask Keep Alive =================
 
 app_flask = Flask('')
 
@@ -75,19 +75,30 @@ def check_rate_limit(user_id):
     return True
 
 def get_public_ip():
-    try:
-        response = requests.get("https://api.ipify.org", timeout=10)
-        return response.text.strip()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error getting public IP: {e}")
-        return None
+    """Try multiple IP services to reliably get public IP"""
+    services = [
+        "https://api.ipify.org",
+        "https://ifconfig.me/ip",
+        "https://ident.me"
+    ]
+    for url in services:
+        try:
+            response = requests.get(url, timeout=10)
+            ip = response.text.strip()
+            if ip:
+                logger.info(f"Public IP detected: {ip} via {url}")
+                return ip
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"{url} failed: {e}")
+            continue
+    return None
 
 def get_ip_info(ip):
     try:
         url = f"http://ip-api.com/json/{ip}"
         response = requests.get(url, timeout=30)
         data = response.json()
-        logger.info(f"API Response: {data}")  # Debug log
+        logger.info(f"API Response: {data}")
         return data
     except requests.exceptions.RequestException as e:
         logger.error(f"Requests Exception: {e}")
@@ -162,7 +173,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     public_ip = get_public_ip()
     if not public_ip:
-        await query.edit_message_text("⚠️ Unable to detect your public IP.")
+        await query.edit_message_text("⚠️ Unable to detect your public IP.\nMake sure you are connected to the internet.")
         return
 
     data = get_ip_info(public_ip)
