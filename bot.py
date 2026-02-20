@@ -5,48 +5,48 @@ import requests
 from collections import defaultdict
 from flask import Flask
 from threading import Thread
-import webbrowser
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # ================= SETUP MENU =================
 
 def setup_bot():
-    print("\n=== Telegram IP Lookup Bot Setup ===")
-    print("1️⃣  Get BOT_TOKEN")
-    print("2️⃣  Start Bot")
-    print("3️⃣  Exit")
+    while True:
+        print("\n=== Telegram IP Lookup Bot Setup ===")
+        print("1️⃣  Get BOT_TOKEN")
+        print("2️⃣  Start Bot")
+        print("3️⃣  Exit")
 
-    choice = input("\nSelect option: ").strip()
+        choice = input("\nSelect option: ").strip()
 
-    if choice == "1":
-        print("\nOpening BotFather...")
-        webbrowser.open("https://t.me/BotFather")
-        return setup_bot()
+        if choice == "1":
+            token = input("\n🔑 Paste your Telegram BOT_TOKEN here:\n> ").strip()
+            if token:
+                print("\n✅ BOT_TOKEN saved temporarily for this session.")
+                return token
+            else:
+                print("❌ Invalid token. Try again.")
 
-    elif choice == "2":
-        token = os.getenv("BOT_TOKEN")
-        if not token:
-            token = input("🔑 Enter your Telegram Bot Token: ").strip()
-        return token
+        elif choice == "2":
+            token = os.getenv("BOT_TOKEN")
+            if token:
+                print("✅ Using BOT_TOKEN from environment.")
+                return token
+            else:
+                print("❌ No BOT_TOKEN found in environment.")
+                print("Please select option 1 to enter manually.")
 
-    else:
-        print("Exiting...")
-        exit()
+        elif choice == "3":
+            print("Exiting...")
+            exit()
 
+        else:
+            print("❌ Invalid option. Try again.")
+
+# ================= CONFIG =================
 
 BOT_TOKEN = setup_bot()
-
 PORT = int(os.environ.get("PORT", 8080))
 RATE_LIMIT_SECONDS = 10
 user_last_used = defaultdict(int)
@@ -65,7 +65,7 @@ def home():
 def run_flask():
     app_flask.run(host='0.0.0.0', port=PORT)
 
-# ============== Core Functions ==============
+# ============== Core Functions =================
 
 def check_rate_limit(user_id):
     now = time.time()
@@ -74,12 +74,27 @@ def check_rate_limit(user_id):
     user_last_used[user_id] = now
     return True
 
+def get_public_ip():
+    try:
+        response = requests.get("https://api.ipify.org", timeout=10)
+        return response.text.strip()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting public IP: {e}")
+        return None
+
 def get_ip_info(ip):
-    url = f"http://ip-api.com/json/{ip}"
-    response = requests.get(url, timeout=10)
-    return response.json()
+    try:
+        url = f"http://ip-api.com/json/{ip}"
+        response = requests.get(url, timeout=30)
+        data = response.json()
+        logger.info(f"API Response: {data}")  # Debug log
+        return data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Requests Exception: {e}")
+        return {"status": "fail", "message": str(e)}
 
 def format_message(ip, data):
+    maps_link = f"https://www.google.com/maps?q={data.get('lat')},{data.get('lon')}"
     return f"""
 🌐 *IP Address:* `{ip}`
 
@@ -94,15 +109,15 @@ def format_message(ip, data):
 🕒 *Timezone:* {data.get('timezone')}
 
 📌 *Coordinates:* `{data.get('lat')}, {data.get('lon')}`
+🗺 [Open in Google Maps]({maps_link})
 """
 
-# ============== Handlers ==============
+# ============== Handlers =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🌍 Lookup My IP", callback_data="myip")]
     ]
-
     await update.message.reply_text(
         "🚀 *Advanced IP Lookup Bot*\n\n"
         "Use command:\n"
@@ -124,63 +139,54 @@ async def ip_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     ip = context.args[0]
+    data = get_ip_info(ip)
 
-    try:
-        data = get_ip_info(ip)
-
-        if data["status"] != "success":
-            await update.message.reply_text("❌ Invalid IP.")
-            return
-
-        keyboard = [
-            [InlineKeyboardButton(
-                "🗺 Open in Google Maps",
-                url=f"https://www.google.com/maps?q={data['lat']},{data['lon']}"
-            )]
-        ]
-
-        await update.message.reply_text(
-            format_message(ip, data),
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            disable_web_page_preview=True
-        )
-
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text("⚠️ Error fetching IP info.")
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = get_ip_info("")
-
-    if data["status"] != "success":
-        await query.edit_message_text("❌ Unable to detect IP.")
+    if data.get("status") != "success":
+        await update.message.reply_text(f"⚠️ Failed to fetch IP info.\nMessage: {data.get('message', 'Unknown error')}")
         return
 
     keyboard = [
-        [InlineKeyboardButton(
-            "🗺 Open in Google Maps",
-            url=f"https://www.google.com/maps?q={data['lat']},{data['lon']}"
-        )]
+        [InlineKeyboardButton("🗺 Open in Google Maps", url=f"https://www.google.com/maps?q={data.get('lat')},{data.get('lon')}")]
     ]
 
-    await query.edit_message_text(
-        format_message(data["query"], data),
+    await update.message.reply_text(
+        format_message(ip, data),
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
         disable_web_page_preview=True
     )
 
-# ============== MAIN ==============
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    public_ip = get_public_ip()
+    if not public_ip:
+        await query.edit_message_text("⚠️ Unable to detect your public IP.")
+        return
+
+    data = get_ip_info(public_ip)
+    if data.get("status") != "success":
+        await query.edit_message_text(f"⚠️ Failed to fetch IP info.\nMessage: {data.get('message', 'Unknown error')}")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("🗺 Open in Google Maps", url=f"https://www.google.com/maps?q={data.get('lat')},{data.get('lon')}")]
+    ]
+
+    await query.edit_message_text(
+        format_message(public_ip, data),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        disable_web_page_preview=True
+    )
+
+# ============== MAIN =================
 
 def main():
-    Thread(target=run_flask).start()
+    Thread(target=run_flask).start()  # Hosting keep-alive
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ip", ip_lookup))
     app.add_handler(CallbackQueryHandler(button_handler))
