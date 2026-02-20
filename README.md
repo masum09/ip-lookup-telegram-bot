@@ -4,7 +4,7 @@
 
 ### 1️⃣ Clone the repo
 ```
-
+https://github.com/masum09/ip-lookup-telegram-bot
 cd ip-lookup-telegram-bot
 ```
 
